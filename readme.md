@@ -14,12 +14,12 @@ The goal is to classify particle physics events into two binary classes using po
 
 Two HDF5 datasets are used:
 
- - Dataset_Specific_Unlabelled.h5 (~28 GiBs) for Pretraining (unsupervised)
- - Dataset_Specific_labelled.h5 (~4.7 GiBs) for Fine-tuning + evaluation
- - 
+ - Dataset_Specific_Unlabelled.h5 (~28 GiBs) (60k samples) for Pretraining (unsupervised)
+ - Dataset_Specific_labelled.h5 (~4.7 GiBs) (10k samples) for Fine-tuning + evaluation
+  
 Each sample is a variable-length point cloud representing detector hits. Each point has 3D spatial coordinates plus additional hit-level features (total input dimension: 10 per point). The labelled dataset is split as follows:
 
-Split : Train-Test-Val = 8000:1000:1000
+Split : Train-Test-Val = 80:10:10
 
 ## Model Pipeline
 
@@ -50,10 +50,11 @@ Loss: Chamfer distance between input and reconstructed point clouds.
 
 The decoder is discarded. The pretrained encoder is attached to a small classification head and trained on the labelled dataset. The encoder is initially frozen (linear probe warm-up) and then unfrozen after a configurable number of epochs for full fine-tuning with differential learning rates.
 
+```
 Input Point Cloud (N × 10)
         │
         ▼
-  FoldingNet Encoder        ← loaded from pretrained checkpoint
+  FoldingNet Encoder        <- loaded from pretrained checkpoint
   (frozen → unfrozen)
         │
         ▼
@@ -67,6 +68,7 @@ Input Point Cloud (N × 10)
   Cross-Entropy Loss
 
 Loss: Cross-entropy.
+```
 
 ## Architecture
 
@@ -74,10 +76,10 @@ Loss: Cross-entropy.
 
 The encoder processes raw point clouds using a graph-based local feature aggregation approach:
 
- - k-NN graph construction — builds a local neighbourhood graph for each point (k=16 neighbours)
- - EdgeConv layers — aggregate edge features from local neighbourhoods to capture local geometry
- - Graph attention layers (graph1.fc, graph2.fc) — weight neighbour contributions via attention
- - MLP projections (mlp1, mlp2) — lift point features through: 19 -> 64 -> 64 → 64 -> 512 -> 1024 -> 512
+ - k-NN graph construction - builds a local neighbourhood graph for each point (k=16 neighbours)
+ - EdgeConv layers - aggregate edge features from local neighbourhoods to capture local geometry
+ - Graph attention layers (graph1.fc, graph2.fc) - weight neighbour contributions via attention
+ - MLP projections (mlp1, mlp2) - lift point features through: 19 -> 64 -> 64 → 64 -> 512 -> 1024 -> 512
  - Global max pooling — aggregates all point features into a single fixed-size codeword (512-dim)
 
 ### FoldingNet Decoder
