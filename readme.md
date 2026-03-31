@@ -27,6 +27,7 @@ Split : Train-Test-Val = 80:10:10
 
 The full autoencoder (encoder + decoder) is trained on the unlabelled dataset to reconstruct input point clouds. No labels are used.
 
+```
 Input Point Cloud (N × 10)
         │
         ▼
@@ -43,6 +44,7 @@ Reconstructed Point Cloud (2025 × 3)
         │
         ▼
   Chamfer Distance Loss
+```
 
 Loss: Chamfer distance between input and reconstructed point clouds.
 
@@ -55,14 +57,14 @@ Input Point Cloud (N × 10)
         │
         ▼
   FoldingNet Encoder        <- loaded from pretrained checkpoint
-  (frozen → unfrozen)
+  (frozen -> unfrozen)
         │
         ▼
   Codeword (512-dim)
         │
         ▼
   Classification Head
-  (512 → 256 → 2)
+  (512 -> 256 -> 2)
         │
         ▼
   Cross-Entropy Loss
@@ -96,16 +98,16 @@ Output is a 2-class logit vector for binary classification.
 
 ## Hyper Parameters
 
- - pretrain_lr     = 1e-3 (with Cosine Annealing)
- - n_pretrain      = 50000
- - pretrain_epoch  = 30
- - finetune_epochs = 50
- - finetune_lr     = 1e-3
- - unfreeze_epoch  = 10
- - batch_size      = 128
- - num_workers     = 4
- - codeword_dim    = 512,
- - n_max           = 2048
+ - Learning rate for pretraining `pretrain_lr` = 1e-3 (with Cosine Annealing)
+ - Number of samples used for pretraining `n_pretrain` = 50000
+ - Epochs for pretraining `pretrain_epoch` = 30
+ - Epochs for fine tuning `finetune_epochs` = 50
+ - Learning rate for fine tuning `finetune_lr` = 1e-3
+ -  Unfreeze encoder after `unfreeze_epoch` = 10
+ - `batch_size`      = 128
+ - `num_workers` for DataLoader = 4
+ - bottleneck embedding size`codeword_dim` = 512,
+ - maximum number of points per point cloud sample `n_max` = 2048
 
 ### Hardware
 
@@ -130,8 +132,12 @@ The following results were yielded from training of this pipeline:
 
 The weights were pruned from 0 to 90% with equal jumps over 50 steps
 
+During this full model pruning, the accuracy drops early on, probably as torch's prune starts pruning the smaller weights first, due to which the linear layers which store the bottleneck information is lost early on.
+
 ### Pruning Classification Head only
 
 ![Head Pruning](images/pruning_head.png)
+
+In only classification head pruning, the accuracy drop is not as significant and model also keeps trying to recover from pruning effect, as encoder stores information primarily.
 
 The weights were pruned from 0 to 90% with equal jumps over 50 steps
