@@ -1,40 +1,3 @@
-"""
-train.py
-────────
-Two-phase training script:
-
-    Phase 1 — Pretraining (unsupervised)
-        Train the full autoencoder on unlabelled data.
-        Loss: Chamfer distance between input and reconstructed point cloud.
-        Saves best checkpoint by validation Chamfer loss.
-
-    Phase 2 — Fine-tuning (supervised)
-        Load pretrained encoder, attach classification head, train on
-        labelled data. Encoder can be frozen (linear probe) or unfrozen
-        (full fine-tuning) after a warm-up period.
-        Loss: Cross-entropy.
-        Saves best checkpoint by validation accuracy.
-
-Run examples
-────────────
-    # pretrain FoldingNet baseline
-    python train.py --phase pretrain --encoder foldingnet \
-        --unlabelled data/unlabelled.h5 --labelled data/labelled.h5
-
-    # pretrain SparseConv bonus model
-    python train.py --phase pretrain --encoder sparseconv \
-        --unlabelled data/unlabelled.h5 --labelled data/labelled.h5
-
-    # fine-tune from pretrained checkpoint
-    python train.py --phase finetune --encoder foldingnet \
-        --pretrain_ckpt checkpoints/foldingnet_pretrain_best.pt \
-        --unlabelled data/unlabelled.h5 --labelled data/labelled.h5
-
-    # fine-tune from scratch (no pretraining — ablation baseline)
-    python train.py --phase finetune --encoder foldingnet \
-        --labelled data/labelled.h5 --scratch
-"""
-
 import os
 import sys
 import time
@@ -52,10 +15,6 @@ from models.folding_net_decoder import FoldingNetDecoder
 from models.auto_encoder import SparseAutoencoder, SparseClassifier
 from data.data_loader import make_dataloaders
 
-
-# ─────────────────────────────────────────────
-# argument parsing
-# ─────────────────────────────────────────────
 
 def parse_args():
     p = argparse.ArgumentParser(description='Sparse Autoencoder Training')
@@ -96,10 +55,6 @@ def parse_args():
     return p.parse_args()
 
 
-# ─────────────────────────────────────────────
-# utilities
-# ─────────────────────────────────────────────
-
 def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -135,10 +90,6 @@ def log(metrics: dict, log_path: str):
         f.write(json.dumps(metrics) + '\n')
 
 
-# ─────────────────────────────────────────────
-# phase 1 — pretraining
-# ─────────────────────────────────────────────
-
 def run_pretrain(args, device: torch.device, loaders: dict) -> str:
     """
     Pretrain the autoencoder on unlabelled data.
@@ -165,7 +116,7 @@ def run_pretrain(args, device: torch.device, loaders: dict) -> str:
     for epoch in range(1, args.pretrain_epochs + 1):
         t0 = time.time()
 
-        # ── train ──────────────────────────────────────────────────────────
+        # train
         model.train()
         train_loss = 0.0
         n_batches  = 0
@@ -178,7 +129,6 @@ def run_pretrain(args, device: torch.device, loaders: dict) -> str:
             loss = model.pretraining_step(batch)
             loss.backward()
 
-            # gradient clipping — Chamfer loss can spike early in training
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
 
             optimizer.step()
@@ -222,15 +172,11 @@ def run_pretrain(args, device: torch.device, loaders: dict) -> str:
     return ckpt_path
 
 
-# ─────────────────────────────────────────────
-# phase 2 — fine-tuning
-# ─────────────────────────────────────────────
-
 def run_finetune(args, device: torch.device, loaders: dict,
                  pretrain_ckpt: str = None) -> str:
     """
     Fine-tune a classifier on labelled data.
-    Loads pretrained encoder if ckpt provided and --scratch not set.
+    Loads pretrained encoder if ckpt provided.
     Returns path to best checkpoint.
     """
     print("\n" + "="*55)
@@ -244,7 +190,7 @@ def run_finetune(args, device: torch.device, loaders: dict,
     model   = SparseAutoencoder(encoder=encoder, decoder=decoder,
                                 codeword_dim=args.codeword_dim)
 
-    # load pretrained weights if available and not in scratch mode
+    # load pretrained weights
     if not args.scratch and pretrain_ckpt and os.path.exists(pretrain_ckpt):
         ckpt = torch.load(pretrain_ckpt, map_location='cpu')
         model.load_state_dict(ckpt['model_state'])
@@ -254,8 +200,7 @@ def run_finetune(args, device: torch.device, loaders: dict,
     else:
         print("  WARNING: no pretrain checkpoint found — training from scratch")
 
-    # build classifier: encoder + head, decoder discarded
-    # start with encoder frozen (linear probe warm-up)
+    # build classifier
     classifier = model.get_classifier(
         num_classes    = 2,
         hidden_dim     = 256,
@@ -266,7 +211,6 @@ def run_finetune(args, device: torch.device, loaders: dict,
 
     criterion = nn.CrossEntropyLoss()
 
-    # only head params initially — encoder is frozen
     optimizer = AdamW(
         filter(lambda p: p.requires_grad, classifier.parameters()),
         lr=args.finetune_lr,
@@ -284,16 +228,14 @@ def run_finetune(args, device: torch.device, loaders: dict,
     for epoch in range(1, args.finetune_epochs + 1):
         t0 = time.time()
 
-        # unfreeze encoder at unfreeze_epoch for full fine-tuning
         if epoch == args.unfreeze_epoch:
             print(f"\n  [Epoch {epoch}] Unfreezing encoder for full fine-tuning")
             classifier.unfreeze_encoder()
-            # reset optimizer to include all params with a lower LR for encoder
             optimizer = AdamW([
                 {'params': classifier.head.parameters(),
                  'lr': args.finetune_lr},
                 {'params': classifier.encoder.parameters(),
-                 'lr': args.finetune_lr * 0.1},   # 10x lower for pretrained weights
+                 'lr': args.finetune_lr * 0.1},   
             ], weight_decay=1e-4)
             scheduler = CosineAnnealingLR(
                 optimizer,
@@ -301,7 +243,7 @@ def run_finetune(args, device: torch.device, loaders: dict,
                 eta_min = 1e-6,
             )
 
-        # ── train ──────────────────────────────────────────────────────────
+        # train
         classifier.train()
         train_loss, train_correct, train_total = 0.0, 0, 0
 
@@ -324,7 +266,7 @@ def run_finetune(args, device: torch.device, loaders: dict,
 
         scheduler.step()
 
-        # ── validate ───────────────────────────────────────────────────────
+        # validate 
         classifier.eval()
         val_loss, val_correct, val_total = 0.0, 0, 0
 
@@ -383,10 +325,6 @@ def run_finetune(args, device: torch.device, loaders: dict,
     print(f"\nFine-tuning done. Best val acc: {best_acc:.2f}%")
     return ckpt_path
 
-
-# ─────────────────────────────────────────────
-# test set evaluation
-# ─────────────────────────────────────────────
 
 def evaluate_test(args, device: torch.device, loaders: dict,
                   finetune_ckpt: str) -> dict:
@@ -455,10 +393,6 @@ def evaluate_test(args, device: torch.device, loaders: dict,
     }
 
 
-# ─────────────────────────────────────────────
-# main
-# ─────────────────────────────────────────────
-
 def main():
     args   = parse_args()
     device = get_device()
@@ -469,7 +403,7 @@ def main():
     print(f"Phase   : {args.phase}")
     print(f"Out dir : {args.out_dir}")
 
-    # build dataloaders — same call regardless of phase
+    # build dataloaders
     print("\nBuilding dataloaders...")
     loaders = make_dataloaders(
         unlabelled_path = args.unlabelled,
@@ -484,18 +418,15 @@ def main():
     pretrain_ckpt  = args.pretrain_ckpt
     finetune_ckpt  = None
 
-    # ── phase 1: pretraining ──────────────────────────────────────────────
     if args.phase in ('pretrain', 'both'):
         pretrain_ckpt = run_pretrain(args, device, loaders)
 
-    # ── phase 2: fine-tuning ──────────────────────────────────────────────
     if args.phase in ('finetune', 'both'):
         finetune_ckpt = run_finetune(
             args, device, loaders,
             pretrain_ckpt = pretrain_ckpt,
         )
 
-    # ── test evaluation ───────────────────────────────────────────────────
     if finetune_ckpt and os.path.exists(finetune_ckpt):
         results = evaluate_test(args, device, loaders, finetune_ckpt)
 

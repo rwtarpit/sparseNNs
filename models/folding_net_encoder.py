@@ -17,13 +17,10 @@ def local_covariance(x, idx):
     energy = x[:, :, 2:].sum(dim=-1, keepdim=True)
     pos    = torch.cat([x[:, :, :2], energy], dim=-1).detach()  # (B, N, 3)
 
-    # gather neighbours: source must be (B, N, 3), index over dim=1
-    # idx: (B, N, K) → expand to (B, N, K, 3) for gathering from (B, N, 3)
-    pos_exp  = pos.unsqueeze(2).expand(-1, -1, K, -1)           # (B, N, K, 3)  — not the gather source
+    # idx: (B, N, K) -> expand to (B, N, K, 3) for gathering from (B, N, 3)
+    pos_exp  = pos.unsqueeze(2).expand(-1, -1, K, -1)           # (B, N, K, 3) 
     idx_exp  = idx.unsqueeze(-1).expand(-1, -1, -1, 3)          # (B, N, K, 3)
 
-    # gather from (B, N, 3) along dim=1 using indices of shape (B, N*K, 3)
-    # reshape idx to (B, N*K, 3), gather, reshape back
     idx_flat = idx.reshape(B, N * K)                            # (B, N*K)
     idx_flat = idx_flat.unsqueeze(-1).expand(-1, -1, 3)         # (B, N*K, 3)
     pos_nbrs = torch.gather(pos, 1, idx_flat)                   # (B, N*K, 3)
@@ -47,7 +44,6 @@ class GraphMaxPool(nn.Module):
         B, N, C = x.shape
         K = idx.shape[-1]
 
-        # gather neighbours without expanding to (B, N, N, C)
         idx_flat  = idx.reshape(B, N * K)                        # (B, N*K)
         idx_flat  = idx_flat.unsqueeze(-1).expand(-1, -1, C)     # (B, N*K, C)
         nbr_feats = torch.gather(x, 1, idx_flat)                 # (B, N*K, C)
@@ -106,17 +102,3 @@ class FoldingNetEncoder(nn.Module):
         feat = self.graph2(feat, idx)                     # (B, N, 1024)
         feat = feat.max(dim=1).values                     # (B, 1024)
         return self.mlp2(feat)                            # (B, 512)
-
-
-if __name__ == '__main__':
-    B, N = 2, 1024
-    encoder = FoldingNetEncoder(k=16, codeword_dim=512, in_dim=10)
-    encoder.eval()
-    dummy = torch.randn(B, N, 10)
-    with torch.no_grad():
-        theta = encoder(dummy)
-    print(f"Input  : {dummy.shape}")
-    print(f"Output : {theta.shape}")
-    assert theta.shape == (B, 512)
-    print("Shape test passed.")
-    print(f"Parameters: {sum(p.numel() for p in encoder.parameters()):,}")

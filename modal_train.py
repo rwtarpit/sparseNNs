@@ -1,6 +1,7 @@
 import os
 import modal
 from pathlib import Path
+import numpy as np
 
 app = modal.App("sparseNN-training")
 
@@ -28,7 +29,6 @@ def _train_worker(
     import sys
     sys.path.insert(0, "/root")
 
-    import torch
     from data.data_loader import make_dataloaders
     from train import run_pretrain, run_finetune, evaluate_test, get_device, set_seed
 
@@ -103,6 +103,34 @@ def train(
         data_vol.commit()
 
 
+@app.function(
+    image=image,
+    gpu="A100",
+    timeout=60 * 60 * 2,
+    volumes={"/data": data_vol},
+)
+def prune_and_plot():
+    import sys
+    sys.path.insert(0, "/root")
+    ratios = np.linspace(0, 0.9, 50).tolist()  
+    ratios_str = [str(round(r, 4)) for r in ratios]
+    sys.argv = [
+        "prune_and_plot.py",
+        "--baseline_ckpt", "/data/checkpoints/foldingnet_finetune_pretrained_best.pt",
+        "--labelled",      "/data/data/Dataset_Specific_labelled.h5",
+        "--unlabelled",    "/data/data/Dataset_Specific_Unlabelled.h5",
+        "--out_dir",       "/data/results",
+        "--batch_size",    "128",
+        "--num_workers",   "4",
+        "--codeword_dim",  "512",
+        "--ratios", *ratios_str,
+    ]
+    from prune import main
+    main()
+    data_vol.commit()
+    return "pruning complete"
+
+
 @app.local_entrypoint()
 def main():
-    train.remote(phase="both", encoder="foldingnet")
+    prune_and_plot.remote()

@@ -1,30 +1,3 @@
-"""
-dataset.py
-──────────
-Dataset classes for both pretraining (unlabelled) and fine-tuning (labelled).
-
-Data format (both files):
-    jet : (N, 125, 125, 8)  float32   — 8-channel sparse detector images
-    Y   : (N, 1)            float32   — binary labels 0/1 (labelled only)
-
-Active pixel definition:
-    A pixel at (r, c) is active if ANY of its 8 channel values is nonzero.
-    Mean ~1220 active pixels per image (7.81% sparsity).
-
-Two output modes controlled by `mode` argument:
-    'foldingnet'  — returns point cloud  (N_active, 10)
-                    each point: (row_norm, col_norm, ch0, ..., ch7)
-                    rows/cols normalised to [-0.5, 0.5] to match the
-                    fixed 2D grid in the folding decoder
-
-    'sparseconv'  — returns sparse tensors
-                    coords : (N_active, 3)  int32  [batch_idx, row, col]
-                    feats  : (N_active, 8)  float32
-
-Both modes pad/truncate to a fixed N_max points per sample so DataLoader
-can collate variable-length point clouds into a single batch tensor.
-"""
-
 from __future__ import annotations
 
 import h5py
@@ -32,16 +5,14 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 
 
 H, W, C      = 125, 125, 8     # image spatial dims and channels
-N_MAX        = 2048             # pad/truncate all clouds to this size
-                                # chosen > observed max (2173 would need 2200,
-                                # we use 2048 for efficiency — rare overflow
-                                # gets truncated, which is fine)
-ROW_SCALE    = 1.0 / (H - 1)   # maps row index [0, 124] → [0, 1]
-COL_SCALE    = 1.0 / (W - 1)   # maps col index [0, 124] → [0, 1]
+N_MAX        = 2048             
+            
+ROW_SCALE    = 1.0 / (H - 1)  
+COL_SCALE    = 1.0 / (W - 1)   
 
 
 
@@ -53,9 +24,8 @@ def image_to_pointcloud(image: np.ndarray, n_max: int = N_MAX) -> np.ndarray:
     row_norm, col_norm are in [-0.5, 0.5]
 
     """
-    # find active pixels — any channel nonzero
     active_mask = np.any(image != 0, axis=-1)          # (H, W)
-    rows, cols  = np.where(active_mask)                # each (n_active,)
+    rows, cols  = np.where(active_mask)              
 
     if len(rows) == 0:
         # degenerate case — empty image
@@ -65,10 +35,7 @@ def image_to_pointcloud(image: np.ndarray, n_max: int = N_MAX) -> np.ndarray:
     rows_norm = rows * ROW_SCALE - 0.5                 # (n_active,)
     cols_norm = cols * COL_SCALE - 0.5                 # (n_active,)
 
-    # gather channel values at active pixels
-    ch_vals   = image[rows, cols, :]                   # (n_active, 8)
-
-    # assemble point cloud — (n_active, 10)
+    ch_vals   = image[rows, cols, :]               
     pc = np.concatenate([
         rows_norm[:, None],
         cols_norm[:, None],
@@ -79,7 +46,6 @@ def image_to_pointcloud(image: np.ndarray, n_max: int = N_MAX) -> np.ndarray:
         idx = np.random.choice(len(pc), n_max, replace=False)
         pc  = pc[idx]
 
-    # pad with zeros if under n_max
     if len(pc) < n_max:
         pad = np.zeros((n_max - len(pc), 10), dtype=np.float32)
         pc  = np.concatenate([pc, pad], axis=0)
@@ -107,7 +73,6 @@ class UnlabelledDataset(Dataset):
         self.n_max   = n_max
         self.h5_file = None   
 
-        # determine which indices to use
         with h5py.File(h5_path, 'r') as f:
             total = f['jet'].shape[0]
 

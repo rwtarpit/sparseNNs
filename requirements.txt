@@ -1,6 +1,7 @@
 torch
 scikit-learn
 matplotlib
+numpy
 h5py
 fsspec
 spconv
